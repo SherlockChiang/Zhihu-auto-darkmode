@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         知乎自动夜间模式
 // @namespace    https://github.com/SherlockChiang/Zhihu-auto-darkmode
-// @version      1.0
-// @description  根据系统深色模式自动切换知乎的黑夜/白天主题，无缝不刷新
+// @version      1.1
+// @description  根据系统深色模式自动切换知乎的黑夜/白天主题
 // @author       Uranium92
 // @match        *://*.zhihu.com/*
 // @icon         https://www.google.com/s2/favicons?sz=256&domain=https://www.zhihu.com/
@@ -15,42 +15,87 @@
 (function() {
     'use strict';
 
-    function autoToggleDarkMode() {
-        const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        
-        const targetElement = document.documentElement;
+    const DARK_HEADER_CLASS = 'css-13z3wib'; 
+    const LIGHT_HEADER_CLASS = 'css-iilrph';  
 
-        if (isSystemDark) {
-            if (targetElement.getAttribute('data-theme') !== 'dark') {
-                targetElement.setAttribute('data-theme', 'dark');
-                document.cookie = "theme=dark; path=/; domain=.zhihu.com; max-age=31536000";
+    function isSystemDark() {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+
+    function applyTheme() {
+        const dark = isSystemDark();
+        const themeStr = dark ? 'dark' : 'light';
+
+        if (document.documentElement.getAttribute('data-theme') !== themeStr) {
+            document.documentElement.setAttribute('data-theme', themeStr);
+        }
+
+        document.cookie = `theme=${themeStr}; path=/; domain=.zhihu.com; max-age=31536000`;
+
+        checkAndBindHeader();
+    }
+
+    let observedHeaderNode = null;
+
+    const headerObserver = new MutationObserver(() => {
+        if (observedHeaderNode) {
+            enforceHeaderClass(observedHeaderNode);
+        }
+    });
+
+    function enforceHeaderClass(headerNode) {
+        const dark = isSystemDark();
+
+        if (dark) {
+            if (headerNode.classList.contains(LIGHT_HEADER_CLASS)) {
+                headerNode.classList.remove(LIGHT_HEADER_CLASS);
+            }
+            if (!headerNode.classList.contains(DARK_HEADER_CLASS)) {
+                headerNode.classList.add(DARK_HEADER_CLASS);
             }
         } else {
-            if (targetElement.getAttribute('data-theme') !== 'light') {
-                targetElement.setAttribute('data-theme', 'light');
-                document.cookie = "theme=light; path=/; domain=.zhihu.com; max-age=31536000";
+            if (headerNode.classList.contains(DARK_HEADER_CLASS)) {
+                headerNode.classList.remove(DARK_HEADER_CLASS);
+            }
+            if (!headerNode.classList.contains(LIGHT_HEADER_CLASS)) {
+                headerNode.classList.add(LIGHT_HEADER_CLASS);
             }
         }
     }
 
-    autoToggleDarkMode();
+    function checkAndBindHeader() {
+        const header = document.querySelector('header.AppHeader') || document.querySelector('.AppHeader');
 
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', autoToggleDarkMode);
+        if (header) {
+            enforceHeaderClass(header);
 
-    const observer = new MutationObserver((mutations) => {
-        const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const targetElement = document.documentElement;
-
-        if (isSystemDark && targetElement.getAttribute('data-theme') !== 'dark') {
-            targetElement.setAttribute('data-theme', 'dark');
-        } else if (!isSystemDark && targetElement.getAttribute('data-theme') !== 'light') {
-            targetElement.setAttribute('data-theme', 'light');
+            if (header !== observedHeaderNode) {
+                headerObserver.disconnect();
+                observedHeaderNode = header;
+                headerObserver.observe(header, { attributes: true, attributeFilter: ['class'] });
+            }
         }
-    });
+    }
+
+    applyTheme();
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
     document.addEventListener('DOMContentLoaded', () => {
-        autoToggleDarkMode(); // 页面加载完再巩固一次
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+        applyTheme();
+
+        const htmlObserver = new MutationObserver(() => {
+            const themeStr = isSystemDark() ? 'dark' : 'light';
+            if (document.documentElement.getAttribute('data-theme') !== themeStr) {
+                document.documentElement.setAttribute('data-theme', themeStr);
+            }
+        });
+        htmlObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+        const bodyObserver = new MutationObserver(() => {
+            checkAndBindHeader();
+        });
+        bodyObserver.observe(document.body, { childList: true, subtree: true });
     });
 
 })();
