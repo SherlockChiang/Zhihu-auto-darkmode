@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         知乎自动夜间模式
 // @namespace    https://github.com/SherlockChiang/Zhihu-auto-darkmode
-// @version      1.2
-// @description  根据系统深色模式自动切换知乎的黑夜/白天主题
-// @author       Uranium92
+// @version      1.3
+// @description  根据系统深色模式自动切换知乎的黑夜/白天主题，并修复 React 类名导致的白底问题
+// @author       Uranium92 & Antigravity
 // @match        *://*.zhihu.com/*
 // @icon         https://www.google.com/s2/favicons?sz=256&domain=https://www.zhihu.com/
 // @updateURL    https://raw.githubusercontent.com/SherlockChiang/Zhihu-auto-darkmode/main/zhihu-auto-dark-mode.user.js
@@ -15,22 +15,56 @@
 (function () {
     'use strict';
 
+    // 考虑到哈希类名易变，保留您的类名操作作为渐进增强，但不作为唯一依赖
     const DARK_HEADER_CLASS  = 'css-13z3wib';
     const LIGHT_HEADER_CLASS = 'css-iilrph';
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
 
-    // 1) 用 CSS 做兜底：即使哈希类名变了或没匹配上，header 颜色也会跟随 data-theme
-    //    这样脚本即便 class 操作失败也不会出现"白头黑身"
+    // 1) 完整的 CSS 兜底与全局强制覆盖：
+    // 当 html[data-theme="dark"] 激活时，强制覆盖知乎写死在浅色类名里的背景色和文字色
     const styleEl = document.createElement('style');
     styleEl.textContent = `
-        html[data-theme="dark"]  header.AppHeader { background-color: #1a1a1a !important; color: #e6e6e6 !important; }
-        html[data-theme="light"] header.AppHeader { background-color: #ffffff !important; color: #1a1a1a !important; }
+        /* 1. Header 的保底覆盖（涵盖您的原本逻辑） */
+        html[data-theme="dark"]  header.AppHeader,
+        html[data-theme="dark"] .AppHeader { background-color: #1a1a1a !important; color: #e6e6e6 !important; border-bottom-color: #282b30 !important; }
+        html[data-theme="light"] header.AppHeader,
+        html[data-theme="light"] .AppHeader { background-color: #ffffff !important; color: #1a1a1a !important; }
+
+        /* 2. 全局 Body 颜色修复 */
+        html[data-theme="dark"] body {
+            background-color: #121212 !important;
+            color: #999 !important;
+        }
+
+        /* 3. 核心容器强制深色化 (信息流卡片, 问题详情头部, 右侧边栏, 评论区容器等) */
+        html[data-theme="dark"] .Card,
+        html[data-theme="dark"] .QuestionHeader,
+        html[data-theme="dark"] .Question-sideColumn,
+        html[data-theme="dark"] .Comments-container,
+        html[data-theme="dark"] .ProfileMain,
+        html[data-theme="dark"] .Post-content {
+            background-color: #1e1e1e !important;
+            color: #c2c6cf !important;
+            border-color: #282b30 !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3) !important;
+        }
+
+        /* 4. 去除部分嵌套元素的透明度/背景冲突 */
+        html[data-theme="dark"] .QuestionHeader-main,
+        html[data-theme="dark"] .QuestionHeader-footer {
+            background-color: transparent !important;
+        }
+
+        /* 5. 顶栏内部元素的文字/图标颜色 */
+        html[data-theme="dark"] .AppHeader-TabsLink,
+        html[data-theme="dark"] .AppHeader-SearchBar input {
+            color: #c2c6cf !important;
+        }
     `;
     (document.head || document.documentElement).appendChild(styleEl);
 
     let cookieSet = false;
     function setThemeCookie(theme) {
-        // cookie 内容只在切换时变化，没必要每次都写
         document.cookie = `theme=${theme}; path=/; domain=.zhihu.com; max-age=31536000`;
         cookieSet = true;
     }
@@ -51,7 +85,6 @@
         const remove = dark ? LIGHT_HEADER_CLASS : DARK_HEADER_CLASS;
         if (node.classList.contains(want) && !node.classList.contains(remove)) return;
 
-        // 解绑→改→重绑，避免自激
         headerObserver.disconnect();
         node.classList.remove(remove);
         node.classList.add(want);
@@ -71,7 +104,7 @@
         headerObserver.observe(header, { attributes: true, attributeFilter: ['class'] });
     }
 
-    // 2) 不再监听整个 body。只在 header 丢失时短暂启用一次性查找
+    // 2) 监听 Header 以执行额外的类名操作 (渐进增强)
     let bodyObserver = null;
     function ensureHeader() {
         const header = document.querySelector('header.AppHeader, .AppHeader');
@@ -96,9 +129,8 @@
         if (document.body) watchForHeader();
     }
 
-    // 3) 初始化（document-start 时 body 可能还不存在）
+    // 3) 初始化
     applyTheme();
-
     mql.addEventListener('change', applyTheme);
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -108,9 +140,8 @@
         new MutationObserver(() => setRootTheme(mql.matches ? 'dark' : 'light'))
             .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-        // 4) SPA 路由切换：history API 钩子（替代 body 全量监听）
+        // 4) SPA 路由切换：history API 钩子
         const reattach = () => {
-            // 路由变了，header 可能被替换，重新查一次
             observedHeader = null;
             headerObserver.disconnect();
             watchForHeader();
