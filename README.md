@@ -13,6 +13,7 @@
 
 ### 第二步：一键安装脚本
 点击下方链接，Tampermonkey 会自动弹出安装界面：
+
 https://raw.githubusercontent.com/SherlockChiang/Zhihu-auto-darkmode/main/zhihu-auto-dark-mode.user.js
 
 ## 实现方式
