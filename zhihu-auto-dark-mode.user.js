@@ -1,120 +1,175 @@
 // ==UserScript==
 // @name         知乎自动夜间模式
 // @namespace    https://github.com/SherlockChiang/Zhihu-auto-darkmode
-// @version      2.0
-// @description  根据系统深色模式自动切换知乎的主题，彻底修复白底漏网之鱼与顶栏图标问题
+// @version      2.2.1
+// @description  根据系统深色模式加载知乎原生主题，并修复少量深色模式遗漏
 // @author       Uranium92
-// @match        *://*.zhihu.com/*
+// @match        https://www.zhihu.com/*
+// @match        https://zhuanlan.zhihu.com/*
 // @icon         https://www.google.com/s2/favicons?sz=256&domain=https://www.zhihu.com/
 // @updateURL    https://raw.githubusercontent.com/SherlockChiang/Zhihu-auto-darkmode/main/zhihu-auto-dark-mode.user.js
 // @downloadURL  https://raw.githubusercontent.com/SherlockChiang/Zhihu-auto-darkmode/main/zhihu-auto-dark-mode.user.js
 // @grant        none
 // @run-at       document-start
+// @noframes
 // ==/UserScript==
 
 (function () {
     'use strict';
 
+    const STYLE_ID = 'zhihu-auto-dark-mode-style';
+    const THEME_PARAM = 'theme';
+    const VALID_THEMES = new Set(['light', 'dark']);
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const root = document.documentElement;
 
-    // 1. 全局 CSS 注入：精准覆盖遗漏容器，修复图标颜色
-    const styleEl = document.createElement('style');
-    styleEl.textContent = `
-        /* --- 深色模式 (Dark) 强制样式 --- */
-        /* 1.1 全局背景与外层包裹修复 */
-        html[data-theme="dark"] body,
-        html[data-theme="dark"] .Topstory-body,
-        html[data-theme="dark"] .App-main {
-            background-color: #121212 !important;
-            color: #999 !important;
-        }
-
-        /* 1.2 核心容器强制深色化 */
-        html[data-theme="dark"] header.AppHeader,
-        html[data-theme="dark"] .AppHeader,
-        html[data-theme="dark"] .Card,
-        html[data-theme="dark"] .QuestionHeader,
-        html[data-theme="dark"] .Question-sideColumn,
-        html[data-theme="dark"] .Comments-container,
-        html[data-theme="dark"] .ProfileMain,
-        html[data-theme="dark"] .Post-content,
-        html[data-theme="dark"] .HotSearchCard,
-        html[data-theme="dark"] .KfeCollection-CreateSaltCard,
-        html[data-theme="dark"] .CornerButton {
-            background-color: #1e1e1e !important;
-            color: #c2c6cf !important;
-            border-color: #282b30 !important;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3) !important;
-        }
-
-        /* 1.3 顶栏图标、链接及文字修复 */
-        html[data-theme="dark"] .AppHeader button,
-        html[data-theme="dark"] .AppHeader svg,
-        html[data-theme="dark"] .AppHeader a {
-            color: #c2c6cf !important;
-            fill: currentColor !important;
-        }
-
-        /* 1.4 搜索框适配 */
-        html[data-theme="dark"] .SearchBar-input {
-            background-color: #121212 !important;
-            color: #c2c6cf !important;
-            border-color: #282b30 !important;
-        }
-
-        /* 1.5 消除部分嵌套元素的底层背景冲突 */
-        html[data-theme="dark"] .QuestionHeader-main,
-        html[data-theme="dark"] .QuestionHeader-footer {
-            background-color: transparent !important;
-        }
-
-        /* --- 浅色模式 (Light) 恢复顶栏原生样式 --- */
-        html[data-theme="light"] header.AppHeader,
-        html[data-theme="light"] .AppHeader {
-            background-color: #ffffff !important;
-            color: #1a1a1a !important;
-            border-bottom: 1px solid #f0f2f7 !important;
-        }
-        html[data-theme="light"] .AppHeader button,
-        html[data-theme="light"] .AppHeader svg,
-        html[data-theme="light"] .AppHeader a {
-            color: #535861 !important;
-            fill: currentColor !important;
-        }
-    `;
-    (document.head || document.documentElement).appendChild(styleEl);
-
-    // 2. Cookie 状态同步
-    function setThemeCookie(theme) {
-        document.cookie = `theme=${theme}; path=/; domain=.zhihu.com; max-age=31536000`;
+    function getPreferredTheme() {
+        return mql.matches ? 'dark' : 'light';
     }
 
-    // 3. 根节点主题属性切换
+    function setThemeCookie(theme) {
+        document.cookie = `theme=${theme}; Path=/; Domain=.zhihu.com; Max-Age=31536000; SameSite=Lax; Secure`;
+    }
+
     function setRootTheme(theme) {
-        const root = document.documentElement;
         if (root.getAttribute('data-theme') !== theme) {
             root.setAttribute('data-theme', theme);
         }
     }
 
-    // 4. 核心调度
-    function applyTheme() {
-        const theme = mql.matches ? 'dark' : 'light';
-        setRootTheme(theme);
-        setThemeCookie(theme);
+    function getNativeThemeHint() {
+        const queryTheme = new URL(location.href).searchParams.get(THEME_PARAM);
+        return VALID_THEMES.has(queryTheme)
+            ? queryTheme
+            : root.getAttribute('data-theme');
     }
 
-    // 立即执行一次
-    applyTheme();
-    // 监听系统深浅色切换
-    mql.addEventListener('change', applyTheme);
+    function getThemeUrl(theme) {
+        const url = new URL(location.href);
+        url.searchParams.set(THEME_PARAM, theme);
+        return url.href;
+    }
 
-    // DOM 加载完后的操作
-    document.addEventListener('DOMContentLoaded', () => {
-        applyTheme();
+    // data-theme 只能切换变量，无法让知乎重新生成 Emotion 的明暗哈希样式。
+    // 首屏主题不一致时先校正 URL，让知乎从服务端开始就使用正确主题。
+    function ensureNativeTheme(theme) {
+        setThemeCookie(theme);
 
-        // 强力防御：防止知乎的原生 JS 加载后把 data-theme 强行覆盖回浅色
-        new MutationObserver(() => setRootTheme(mql.matches ? 'dark' : 'light'))
-            .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    });
+        if (getNativeThemeHint() !== theme) {
+            location.replace(getThemeUrl(theme));
+            return false;
+        }
+
+        setRootTheme(theme);
+        return true;
+    }
+
+    function injectFallbackStyles() {
+        if (document.getElementById(STYLE_ID)) {
+            return;
+        }
+
+        const styleEl = document.createElement('style');
+        styleEl.id = STYLE_ID;
+        styleEl.textContent = `
+            html[data-theme="dark"] {
+                color-scheme: dark;
+            }
+
+            /* 只补齐仍使用固定浅色的业务组件，主页面结构交给知乎原生主题。 */
+            html[data-theme="dark"] :where(
+                .jumpThird-ad-tip, .Pc-feedAd-container--mobile,
+                .Pc-feedAd-card-sign-popup, .Pc-feedAd-card-sign-popup-menu,
+                .Pc-feedAd-card-content, .Pc-feedAd-new-card-content,
+                .KfeCollection-CreateSaltCard, .KfeCollection-GoodsCardNew-wrapper,
+                .KfeCollection-GoodsCardV2, .KfeCollection-PaidConsultCard-CardWrapper,
+                .KfeCollection-PcCollegeCard-root, .KfeCollection-PcSaltBrandCard,
+                .KfeCollection-PayModal-wrapper, .TooltipContent--white
+            ) {
+                background-color: var(--GBK99A, #191b1f) !important;
+                border-color: var(--GBK09A, #282b30) !important;
+                color: var(--GBK03A, #c2c6cf) !important;
+            }
+
+            html[data-theme="dark"] :where(.Pc-feedAd-card-title, .Pc-feedAd-new-title) {
+                color: var(--GBK02A, #fff) !important;
+            }
+
+            html[data-theme="dark"] .KfeCollection-components-Toast {
+                background-color: var(--GBK10C, #000) !important;
+                color: var(--GBK03A, #c2c6cf) !important;
+            }
+
+            html[data-theme="dark"] :where(
+                .NavigateToAppCheckCard-mask, .KfeCollection-TextLink-mask,
+                .KfeCollection-PurchaseBtn-mask
+            ) {
+                background: linear-gradient(180deg, transparent, var(--GBK99A, #191b1f)) !important;
+            }
+
+            html[data-theme="dark"] .TooltipContent--white .TooltipContent-arrow::after {
+                background-color: var(--GBK99A, #191b1f) !important;
+            }
+
+            html[data-theme="dark"] .SignContainer-content input:-webkit-autofill {
+                -webkit-text-fill-color: var(--GBK03A, #c2c6cf) !important;
+                -webkit-box-shadow: inset 0 0 0 1000px var(--GBK10A, #212429) !important;
+            }
+
+            html[data-theme="dark"] :where(
+                .ModalWrap-itemBtn, .SearchSubTabs-item, .DraftHistory-revert,
+                .Pc-feedAd-link-btn
+            ):is(:hover, :focus-visible, .is-active) {
+                color: var(--GBL01A, #558eff) !important;
+            }
+
+            html[data-theme="dark"] :where(
+                .SearchTabs-customFilter .tag-selected, .highlight-wrap-checking
+            ) {
+                background-color: rgba(85, 142, 255, .1) !important;
+            }
+
+            html[data-theme="dark"] :where(
+                .AnswerForm-fullscreenBackdrop, .ImageView.is-active, .ImageGallery.is-active
+            ) {
+                background-color: rgba(0, 0, 0, .65) !important;
+            }
+        `;
+        (document.head || root).appendChild(styleEl);
+    }
+
+    function handleSystemThemeChange() {
+        const theme = getPreferredTheme();
+        const nextUrl = getThemeUrl(theme);
+
+        setThemeCookie(theme);
+        setRootTheme(theme);
+
+        // 重新加载一次，使 Emotion 哈希类与新的系统主题保持一致。
+        if (nextUrl === location.href) {
+            location.reload();
+        } else {
+            location.replace(nextUrl);
+        }
+    }
+
+    const initialTheme = getPreferredTheme();
+    if (!ensureNativeTheme(initialTheme)) {
+        return;
+    }
+
+    // 浅色页面完全使用知乎原生样式，不注入不会生效的深色补丁。
+    if (initialTheme === 'dark') {
+        injectFallbackStyles();
+    }
+
+    // 防止知乎初始化或 SPA 导航覆盖系统主题。
+    new MutationObserver(() => setRootTheme(getPreferredTheme()))
+        .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', handleSystemThemeChange);
+    } else {
+        mql.addListener(handleSystemThemeChange);
+    }
 })();
